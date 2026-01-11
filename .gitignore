@@ -1,0 +1,125 @@
+############################################################
+# GitHub official template base: VisualStudio.gitignore
+# + DirectX additions (HLSL / shaders / vcpkg / assets build)
+############################################################
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# User-specific files (MonoDevelop/Xamarin Studio)
+*.userprefs
+
+# Mono auto generated files
+mono_crash.*
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+ARM/
+ARM64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+
+# Visual Studio 2015/2017 cache/options directory
+.vs/
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+*.VC.db
+*.VC.VC.opendb
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# Visual Studio Trace Files
+*.e2e
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+
+# MSBuild Artifacts
+*.tlog
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Mac desktop service store files
+.DS_Store
+
+############################################################
+# CMake (DirectX projects often use it too)
+############################################################
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build/
+out/
+
+############################################################
+# DirectX / HLSL (DX11/DX12) additions
+############################################################
+
+# Shader compiled objects
+*.cso
+*.fxo
+*.pso
+*.dso
+
+# If you generate shader reflection blobs / intermediates
+*.hlsl.cache
+
+# PIX / GPU captures (optional)
+*.wpix
+*.pix3
+
+############################################################
+# vcpkg (recommended policy)
+############################################################
+vcpkg_installed/
+
+# If you use "classic mode integrate install" and keep vcpkg as local folder:
+# vcpkg/
+
+############################################################
+# Extra (common when using external libs)
+############################################################
+external/**/build/
+external/**/bin/
+external/**/obj/
