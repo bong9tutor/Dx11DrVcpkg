@@ -8,6 +8,7 @@
 extern void ExitGame() noexcept;
 
 using namespace DirectX;
+using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
@@ -83,6 +84,7 @@ void Game::Render()
 
     // Show the new frame.
     m_deviceResources->Present();
+    m_graphicsMemory->Commit();
 }
 
 // Helper method to clear the back buffers.
@@ -166,7 +168,8 @@ void Game::GetDefaultSize(int& width, int& height) const noexcept
 void Game::CreateDeviceDependentResources()
 {
     auto device = m_deviceResources->GetD3DDevice();
-
+    m_graphicsMemory = std::make_unique<GraphicsMemory>(device);
+    
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
 }
@@ -180,6 +183,7 @@ void Game::CreateWindowSizeDependentResources()
 void Game::OnDeviceLost()
 {
     // TODO: Add Direct3D resource cleanup here.
+    m_graphicsMemory.reset();
 }
 
 void Game::OnDeviceRestored()
