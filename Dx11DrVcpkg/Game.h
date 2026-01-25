@@ -65,4 +65,18 @@ private:
     
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
+    
+    // 텍스쳐 불러오기
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_texture;
+    
+    RECT m_fullscreenRect;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_background;
+    
+    // 스프라이트 그리기
+    std::unique_ptr<DirectX::SpriteBatch> m_spriteBatch;
+    DirectX::SimpleMath::Vector2 m_screenPos;
+    DirectX::SimpleMath::Vector2 m_origin;
+    
+    // 알파블랜딩 사용
+    std::unique_ptr<DirectX::CommonStates> m_states;
 };

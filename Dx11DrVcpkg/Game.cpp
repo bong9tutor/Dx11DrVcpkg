@@ -79,8 +79,22 @@ void Game::Render()
 
     // TODO: Add your rendering code here.
     context;
-
+    
     m_deviceResources->PIXEndEvent();
+    
+    float time = float(m_timer.GetTotalSeconds());
+    
+    // 스프라이트 그리기
+    m_spriteBatch->Begin(SpriteSortMode_Deferred, m_states->NonPremultiplied(), m_states->LinearWrap());
+    m_spriteBatch->Draw(m_background.Get(), m_fullscreenRect);
+    m_spriteBatch->Draw(m_texture.Get(),
+        m_screenPos,
+        nullptr,
+        Colors::White,
+        0.f,
+        m_origin
+    );
+    m_spriteBatch->End();
 
     // Show the new frame.
     m_deviceResources->Present();
@@ -172,18 +186,60 @@ void Game::CreateDeviceDependentResources()
     
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
+    
+    auto size = m_deviceResources->GetOutputSize();
+    m_screenPos.x = float(size.right) / 2.f;
+    m_screenPos.y = float(size.bottom) / 2.f;
+    
+    auto context = m_deviceResources->GetD3DDeviceContext();
+    m_spriteBatch = std::make_unique<DirectX::SpriteBatch>(context);
+    m_states      = std::make_unique<DirectX::CommonStates>(device);
+    
+    ComPtr<ID3D11Resource> resource;
+    DX::ThrowIfFailed(
+        CreateWICTextureFromFile(device, L"../Images/cat.dds",
+            resource.GetAddressOf(),
+            m_texture.ReleaseAndGetAddressOf()
+        )
+    );
+    
+    DX::ThrowIfFailed(
+        CreateWICTextureFromFile(device, L"../Images/sunset.dds",
+            nullptr,
+            m_background.ReleaseAndGetAddressOf()
+        )
+    );
+    
+    ComPtr<ID3D11Texture2D> texture;
+    DX::ThrowIfFailed(resource.As(&texture));
+    
+    CD3D11_TEXTURE2D_DESC catDesc;
+    texture->GetDesc(&catDesc);
+    
+    m_origin.x = float(catDesc.Width  / 2);
+    m_origin.y = float(catDesc.Height / 2);
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
 void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
+    
+    auto size = m_deviceResources->GetOutputSize();
+    m_screenPos.x = float(size.right) / 2;
+    m_screenPos.y = float(size.bottom) / 2;
+    
+    m_fullscreenRect = m_deviceResources->GetOutputSize();
 }
 
 void Game::OnDeviceLost()
 {
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
+    m_texture.Reset();
+    m_background.Reset();
+    m_spriteBatch.reset();
+    m_states.reset();
 }
 
 void Game::OnDeviceRestored()
