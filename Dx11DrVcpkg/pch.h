@@ -76,6 +76,10 @@
 #include <directxtk/VertexTypes.h>
 #include <directxtk/WICTextureLoader.h>
 
+#include <string>
+#include <codecvt>
+#include <locale>
+
 namespace DX
 {
     // Helper class for COM exceptions

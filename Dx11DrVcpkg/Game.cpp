@@ -59,9 +59,6 @@ void Game::Update(DX::StepTimer const& timer)
 
     // TODO: Add your game logic here.
     elapsedTime;
-    
-    m_ship->Update(elapsedTime);
-    m_stars->Update(elapsedTime * 500);
 }
 #pragma endregion
 
@@ -84,8 +81,23 @@ void Game::Render()
     context;
     
     m_spriteBatch->Begin();
-    m_stars->Draw(m_spriteBatch.get());
-    m_ship->Draw(m_spriteBatch.get(), m_shipPos);
+    
+    const wchar_t* output = L"Hello World";
+    
+    Vector2 origin = m_font->MeasureString(output) / 2.f;
+    
+    m_font->DrawString(m_spriteBatch.get(), output,
+    m_fontPos + Vector2(1.f, 1.f), Colors::Black, 0.f, origin);
+    m_font->DrawString(m_spriteBatch.get(), output,
+        m_fontPos + Vector2(-1.f, 1.f), Colors::Black, 0.f, origin);
+    m_font->DrawString(m_spriteBatch.get(), output,
+        m_fontPos + Vector2(-1.f, -1.f), Colors::Black, 0.f, origin);
+    m_font->DrawString(m_spriteBatch.get(), output,
+        m_fontPos + Vector2(1.f, -1.f), Colors::Black, 0.f, origin);
+
+    m_font->DrawString(m_spriteBatch.get(), output,
+        m_fontPos, Colors::White, 0.f, origin);
+    
     m_spriteBatch->End();
 
     m_deviceResources->PIXEndEvent();
@@ -181,22 +193,10 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
+    m_font = std::make_unique<DirectX::SpriteFont>(device, L"../Fonts/couriernew.spritefont");
+    
     auto context = m_deviceResources->GetD3DDeviceContext();
     m_spriteBatch = std::make_unique<SpriteBatch>(context);
-    
-    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"../Images/shipanimated.dds",
-        nullptr, m_texture.ReleaseAndGetAddressOf())
-    );
-    
-    m_ship = std::make_unique<AnimatedTexture>();
-    m_ship->Load(m_texture.Get(), 4, 20);
-    
-    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"../Images/starfield.dds",
-        nullptr, m_backgroundTex.ReleaseAndGetAddressOf())
-    );
-    
-    m_stars = std::make_unique<ScrollingBackground>();
-    m_stars->Load(m_backgroundTex.Get());
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -204,21 +204,17 @@ void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
     auto size = m_deviceResources->GetOutputSize();
-    m_shipPos.x = float(size.right / 2);
-    m_shipPos.y = float((size.bottom / 2) + (size.bottom / 4));
-    
-    m_stars->SetWindow(size.right, size.bottom);
+    m_fontPos.x = float(size.right) / 2.f;
+    m_fontPos.y = float(size.bottom) / 2.f;
 }
 
 void Game::OnDeviceLost()
 {
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
-    m_ship.reset();
+    
+    m_font.reset();
     m_spriteBatch.reset();
-    m_texture.Reset();
-    m_stars.reset();
-    m_backgroundTex.Reset();
 }
 
 void Game::OnDeviceRestored()
