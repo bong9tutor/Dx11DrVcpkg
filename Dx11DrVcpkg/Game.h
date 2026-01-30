@@ -9,6 +9,9 @@
 
 #include <memory>
 
+#include "AnimatedTexture.h"
+#include "ScrollingBackground.h"
+
 
 // A basic game implementation that creates a D3D11 device and
 // provides a game loop.
@@ -66,17 +69,11 @@ private:
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
     
-    // 텍스쳐 불러오기
+    std::unique_ptr<DirectX::SpriteBatch>            m_spriteBatch;
+    std::unique_ptr<AnimatedTexture>                 m_ship;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_texture;
+    DirectX::SimpleMath::Vector2                     m_shipPos;
     
-    RECT m_fullscreenRect;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_background;
-    
-    // 스프라이트 그리기
-    std::unique_ptr<DirectX::SpriteBatch> m_spriteBatch;
-    DirectX::SimpleMath::Vector2 m_screenPos;
-    DirectX::SimpleMath::Vector2 m_origin;
-    
-    // 알파블랜딩 사용
-    std::unique_ptr<DirectX::CommonStates> m_states;
+    std::unique_ptr<ScrollingBackground> m_stars;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_backgroundTex;
 };
