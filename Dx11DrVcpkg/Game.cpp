@@ -12,17 +12,9 @@ using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
-namespace
-{
-    constexpr UINT MSAA_COUNT   = 4;
-    constexpr UINT MSAA_QUALITY = 0;
-}
-
 Game::Game() noexcept(false)
 {
-    m_deviceResources = std::make_unique<DX::DeviceResources>(
-        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN);
-    
+    m_deviceResources = std::make_unique<DX::DeviceResources>();
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
     //   Add DX::DeviceResources::c_AllowTearing to opt-in to variable rate displays.
     //   Add DX::DeviceResources::c_EnableHDR for HDR10 display.
@@ -68,7 +60,8 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
     
-    m_world = Matrix::CreateRotationY(cosf(static_cast<float>(timer.GetTotalSeconds())));
+    auto time = static_cast<float>(timer.GetTotalSeconds());
+    m_world = Matrix::CreateRotationZ(time);
 }
 #pragma endregion
 
@@ -90,52 +83,10 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
 
-    context->OMSetBlendState(m_states->Opaque(), nullptr, 0xFFFFFFFF);
-    context->OMSetDepthStencilState(m_states->DepthNone(), 0);
-    context->RSSetState(m_raster.Get());
+    m_shape->Draw(m_world, m_view, m_proj, Colors::White, m_texture.Get());
     
-    m_effect->SetWorld(m_world);
-    m_effect->Apply(context);
-    
-    context->IASetInputLayout(m_inputLayout.Get());
-    
-    m_batch->Begin();
-    
-    Vector3 xaxis(2.f, 0.f, 0.f);
-    Vector3 yaxis(0.f, 0.f, 2.f);
-    Vector3 origin = Vector3::Zero;
-    
-    constexpr size_t divisions = 20;
-    
-    for (size_t i = 0; i <= divisions; ++i)
-    {
-        float fPercent = float(i) / float(divisions);
-        fPercent = (fPercent * 2.f) - 1.f;
-        
-        Vector3 scale = xaxis * fPercent + origin;
-        
-        VertexPositionColor v1(scale - yaxis, Colors::White);
-        VertexPositionColor v2(scale + yaxis, Colors::White);
-        m_batch->DrawLine(v1, v2);
-    }
-    
-    for (size_t i = 0; i <= divisions; ++i)
-    {
-        float fPercent = float(i) / float(divisions);
-        fPercent = (fPercent * 2.f) - 1.f;
-        
-        Vector3 scale = yaxis * fPercent + origin;
-        
-        VertexPositionColor v1(scale - xaxis, Colors::White);
-        VertexPositionColor v2(scale + xaxis, Colors::White);
-        m_batch->DrawLine(v1, v2);
-    }
-    
-    m_batch->End();   
-    
-    context->ResolveSubresource(m_deviceResources->GetRenderTarget(), 0,
-        m_offscreenRenderTarget.Get(), 0,
-        m_deviceResources->GetBackBufferFormat());
+    m_effect->SetWorld(m_world);;
+    m_shape->Draw(m_effect.get(), m_inputLayout.Get());
     
     m_deviceResources->PIXEndEvent();
 
@@ -151,8 +102,8 @@ void Game::Clear()
 
     // Clear the views.
     auto context = m_deviceResources->GetD3DDeviceContext();
-    auto renderTarget = m_offscreenRenderTargetSRV.Get();
-    auto depthStencil = m_depthStencilSRV.Get();
+    auto renderTarget = m_deviceResources->GetRenderTargetView();
+    auto depthStencil = m_deviceResources->GetDepthStencilView();
 
     context->ClearRenderTargetView(renderTarget, Colors::CornflowerBlue);
     context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
@@ -230,26 +181,33 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    m_world = Matrix::Identity;
-    
-    m_states = std::make_unique<CommonStates>(device);
-    
-    m_effect = std::make_unique<BasicEffect>(device);
-    m_effect->SetVertexColorEnabled(true);
-    
     DX::ThrowIfFailed(
-        CreateInputLayoutFromEffect<VertexPositionColor>(device, m_effect.get(),
-            m_inputLayout.ReleaseAndGetAddressOf())
-    );
+        CreateWICTextureFromFile(device, L"../Images/earth.bmp", nullptr,
+            m_texture.ReleaseAndGetAddressOf()));
     
     auto context = m_deviceResources->GetD3DDeviceContext();
-    m_batch = std::make_unique<PrimitiveBatch<VertexPositionColor>>(context);
+    m_shape = GeometricPrimitive::CreateSphere(context);
     
-    CD3D11_RASTERIZER_DESC rastDesc(D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE,
-        D3D10_DEFAULT_DEPTH_BIAS, D3D11_DEFAULT_DEPTH_BIAS_CLAMP,
-        D3D11_DEFAULT_SLOPE_SCALED_DEPTH_BIAS, TRUE, FALSE, FALSE, TRUE);
+    m_world = Matrix::Identity;
     
-    DX::ThrowIfFailed(device->CreateRasterizerState(&rastDesc, m_raster.ReleaseAndGetAddressOf()));
+    m_effect = std::make_unique<BasicEffect>(device);
+    m_effect->SetTextureEnabled(true);
+    m_effect->SetPerPixelLighting(true);
+    m_effect->SetLightingEnabled(true);
+    m_effect->SetLightEnabled(0, true);
+    m_effect->SetLightDiffuseColor(0, Colors::White);
+    m_effect->SetLightDirection(0, -Vector3::UnitZ);
+    
+    m_shape = GeometricPrimitive::CreateSphere(context);
+    m_shape->CreateInputLayout(m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf());
+    
+    DX::ThrowIfFailed(
+        CreateWICTextureFromFile(device, L"../Images/earth.bmp", nullptr,
+            m_texture.ReleaseAndGetAddressOf()));
+    
+    m_effect->SetTexture(m_texture.Get());
+    
+    m_world = Matrix::Identity;
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -258,48 +216,13 @@ void Game::CreateWindowSizeDependentResources()
     // TODO: Initialize windows-size dependent objects here.
     
     auto size = m_deviceResources->GetOutputSize();
-    
-    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), 
+    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f),
         Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f,
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, 
         float(size.right) / float(size.bottom), 0.1f, 10.f);
     
     m_effect->SetView(m_view);
     m_effect->SetProjection(m_proj);
-    
-    auto device = m_deviceResources->GetD3DDevice();
-    auto width  = static_cast<UINT>(size.right);
-    auto height = static_cast<UINT>(size.bottom);
-    
-    CD3D11_TEXTURE2D_DESC rtDesc(m_deviceResources->GetBackBufferFormat(),
-        width, height, 1, 1,
-        D3D11_BIND_RENDER_TARGET, D3D11_USAGE_DEFAULT, 0,
-        MSAA_COUNT, MSAA_QUALITY);
-    
-    DX::ThrowIfFailed(
-        device->CreateTexture2D(&rtDesc, nullptr,
-            m_offscreenRenderTarget.ReleaseAndGetAddressOf()));
-            
-    CD3D11_RENDER_TARGET_VIEW_DESC rtvDesc(D3D11_RTV_DIMENSION_TEXTURE2DMS);
-    
-    DX::ThrowIfFailed(
-        device->CreateRenderTargetView(m_offscreenRenderTarget.Get(),
-            &rtvDesc, m_offscreenRenderTargetSRV.ReleaseAndGetAddressOf()));
-    
-    CD3D11_TEXTURE2D_DESC dsDesc(DXGI_FORMAT_D32_FLOAT,
-        width, height, 1, 1,
-        D3D11_BIND_DEPTH_STENCIL, D3D11_USAGE_DEFAULT, 0,
-        MSAA_COUNT, MSAA_QUALITY);
-    
-    ComPtr<ID3D11Texture2D> depthBuffer;
-    DX::ThrowIfFailed(
-        device->CreateTexture2D(&dsDesc, nullptr, depthBuffer.GetAddressOf()));
-    
-    CD3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc(D3D11_DSV_DIMENSION_TEXTURE2DMS);
-    
-    DX::ThrowIfFailed(
-        device->CreateDepthStencilView(depthBuffer.Get(),
-            &dsvDesc, m_depthStencilSRV.ReleaseAndGetAddressOf()));
 }
 
 void Game::OnDeviceLost()
@@ -307,16 +230,10 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
     
-    m_states.reset();
+    m_shape.reset();
+    m_texture.Reset();
     m_effect.reset();
-    m_batch.reset();
     m_inputLayout.Reset();
-    
-    m_raster.Reset();
-    
-    m_offscreenRenderTarget.Reset();
-    m_offscreenRenderTargetSRV.Reset();
-    m_depthStencilSRV.Reset();
 }
 
 void Game::OnDeviceRestored()
