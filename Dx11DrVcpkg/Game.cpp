@@ -60,8 +60,9 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
     
-    auto time = static_cast<float>(timer.GetTotalSeconds());
-    m_world = Matrix::CreateRotationZ(time);
+    float time = float(timer.GetTotalSeconds());
+    
+    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
 }
 #pragma endregion
 
@@ -82,12 +83,9 @@ void Game::Render()
 
     // TODO: Add your rendering code here.
     context;
+    
+    m_model->Draw(context, *m_states, m_world, m_view, m_proj);
 
-    m_shape->Draw(m_world, m_view, m_proj, Colors::White, m_texture.Get());
-    
-    m_effect->SetWorld(m_world);;
-    m_shape->Draw(m_effect.get(), m_inputLayout.Get());
-    
     m_deviceResources->PIXEndEvent();
 
     // Show the new frame.
@@ -181,33 +179,33 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    DX::ThrowIfFailed(
-        CreateWICTextureFromFile(device, L"../Images/earth.bmp", nullptr,
-            m_texture.ReleaseAndGetAddressOf()));
+    m_states    = std::make_unique<CommonStates>(device);
+    m_fxFactory = std::make_unique<DGSLEffectFactory>(device); // DGSLEffect 는 Fog 를 지원 하지 않음
+    SetCurrentDirectory(L"../Models/cup");           // texture 를 못찾는 경우가 있어서, 프로젝트의 현재 위치를 강제 설정
+    m_model     = Model::CreateFromCMO(device, L"cup.cmo", *m_fxFactory);
+    m_world     = Matrix::Identity;
     
-    auto context = m_deviceResources->GetD3DDeviceContext();
-    m_shape = GeometricPrimitive::CreateSphere(context);
-    
-    m_world = Matrix::Identity;
-    
-    m_effect = std::make_unique<BasicEffect>(device);
-    m_effect->SetTextureEnabled(true);
-    m_effect->SetPerPixelLighting(true);
-    m_effect->SetLightingEnabled(true);
-    m_effect->SetLightEnabled(0, true);
-    m_effect->SetLightDiffuseColor(0, Colors::White);
-    m_effect->SetLightDirection(0, -Vector3::UnitZ);
-    
-    m_shape = GeometricPrimitive::CreateSphere(context);
-    m_shape->CreateInputLayout(m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf());
-    
-    DX::ThrowIfFailed(
-        CreateWICTextureFromFile(device, L"../Images/earth.bmp", nullptr,
-            m_texture.ReleaseAndGetAddressOf()));
-    
-    m_effect->SetTexture(m_texture.Get());
-    
-    m_world = Matrix::Identity;
+    m_model->UpdateEffects([](IEffect* effect)
+    {
+        auto lights = dynamic_cast<IEffectLights*>(effect);
+        if (lights)
+        {
+            lights->SetLightingEnabled(true);
+            lights->SetPerPixelLighting(true);
+            lights->SetLightDiffuseColor(0, Colors::Gold);
+            lights->SetLightEnabled(1, false);
+            lights->SetLightEnabled(2, false);
+        }
+        
+        auto fog = dynamic_cast<IEffectFog*>(effect);
+        if (fog)
+        {
+            fog->SetFogEnabled(true);
+            fog->SetFogColor(Colors::CornflowerBlue);
+            fog->SetFogStart(3.0f);
+            fog->SetFogEnd(4.0f);
+        }
+    });
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -218,11 +216,8 @@ void Game::CreateWindowSizeDependentResources()
     auto size = m_deviceResources->GetOutputSize();
     m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f),
         Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, 
-        float(size.right) / float(size.bottom), 0.1f, 10.f);
-    
-    m_effect->SetView(m_view);
-    m_effect->SetProjection(m_proj);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f,
+        float(size.right) / float(size.bottom), 0.1f, 10.0f);
 }
 
 void Game::OnDeviceLost()
@@ -230,10 +225,9 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
     
-    m_shape.reset();
-    m_texture.Reset();
-    m_effect.reset();
-    m_inputLayout.Reset();
+    m_states.reset();
+    m_fxFactory.reset();
+    m_model.reset();
 }
 
 void Game::OnDeviceRestored()

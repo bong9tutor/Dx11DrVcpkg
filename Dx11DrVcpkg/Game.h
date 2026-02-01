@@ -70,9 +70,7 @@ private:
     DirectX::SimpleMath::Matrix m_view;
     DirectX::SimpleMath::Matrix m_proj;
     
-    std::unique_ptr<DirectX::GeometricPrimitive>     m_shape;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_texture;
-    
-    std::unique_ptr<DirectX::BasicEffect>            m_effect;
-    Microsoft::WRL::ComPtr<ID3D11InputLayout>        m_inputLayout;
+    std::unique_ptr<DirectX::CommonStates>   m_states;
+    std::unique_ptr<DirectX::IEffectFactory> m_fxFactory;
+    std::unique_ptr<DirectX::Model>          m_model;
 };
