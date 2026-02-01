@@ -59,6 +59,16 @@ void Game::Update(DX::StepTimer const& timer)
 
     // TODO: Add your game logic here.
     elapsedTime;
+    
+    auto time = static_cast<float>(m_timer.GetTotalSeconds());
+    
+    float yaw   = time * 0.4f;
+    float pitch = time * 0.7f;
+    float roll  = time * 1.1f;
+    
+    auto quat = Quaternion::CreateFromYawPitchRoll(yaw, pitch, roll);
+    auto light = XMVector3Rotate(g_XMOne, quat);
+    m_effect->SetLightDirection(0, light);
 }
 #pragma endregion
 
@@ -80,25 +90,25 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
     
-    m_spriteBatch->Begin();
+    context->OMSetBlendState(m_states->Opaque(), nullptr, 0xFFFFFFFF);
+    context->OMSetDepthStencilState(m_states->DepthNone(), 0);
+    context->RSSetState(m_states->CullNone());
     
-    const wchar_t* output = L"Hello World";
+    m_effect->Apply(context);
     
-    Vector2 origin = m_font->MeasureString(output) / 2.f;
+    auto sampler = m_states->LinearClamp();
+    context->PSSetSamplers(0, 1, &sampler);
+    context->IASetInputLayout(m_inputLayout.Get());
     
-    m_font->DrawString(m_spriteBatch.get(), output,
-    m_fontPos + Vector2(1.f, 1.f), Colors::Black, 0.f, origin);
-    m_font->DrawString(m_spriteBatch.get(), output,
-        m_fontPos + Vector2(-1.f, 1.f), Colors::Black, 0.f, origin);
-    m_font->DrawString(m_spriteBatch.get(), output,
-        m_fontPos + Vector2(-1.f, -1.f), Colors::Black, 0.f, origin);
-    m_font->DrawString(m_spriteBatch.get(), output,
-        m_fontPos + Vector2(1.f, -1.f), Colors::Black, 0.f, origin);
-
-    m_font->DrawString(m_spriteBatch.get(), output,
-        m_fontPos, Colors::White, 0.f, origin);
+    m_batch->Begin();
     
-    m_spriteBatch->End();
+    VertexPositionNormalTexture v1(Vector3(400.f, 150.f, 0.f), -Vector3::UnitZ, Vector2(0.5f, 0.f));
+    VertexPositionNormalTexture v2(Vector3(600.f, 450.f, 0.f), -Vector3::UnitZ, Vector2(1.f, 1.f));
+    VertexPositionNormalTexture v3(Vector3(200.f, 450.f, 0.f), -Vector3::UnitZ, Vector2(0.f, 1.f));
+    
+    m_batch->DrawTriangle(v1, v2, v3);
+    
+    m_batch->End();
 
     m_deviceResources->PIXEndEvent();
 
@@ -193,19 +203,43 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    m_font = std::make_unique<DirectX::SpriteFont>(device, L"../Fonts/couriernew.spritefont");
+    m_states = std::make_unique<CommonStates>(device);
     
     auto context = m_deviceResources->GetD3DDeviceContext();
-    m_spriteBatch = std::make_unique<SpriteBatch>(context);
+    m_batch = std::make_unique<PrimitiveBatch<VertexType>>(context);
+    
+    DX::ThrowIfFailed(
+        CreateWICTextureFromFile(device, L"../Images/rocks.dds", nullptr,
+        m_texture.ReleaseAndGetAddressOf())
+    );
+    
+    DX::ThrowIfFailed(
+        CreateDDSTextureFromFile(device, L"../Images/rocks_normalmap.dds", nullptr,
+            m_normalMap.ReleaseAndGetAddressOf())
+    );
+    
+    m_effect = std::make_unique<NormalMapEffect>(device);
+    m_effect->SetTexture(m_texture.Get());
+    m_effect->SetNormalTexture(m_normalMap.Get());
+    
+    m_effect->EnableDefaultLighting();
+    m_effect->SetLightDiffuseColor(0, Colors::Gray);
+    
+    DX::ThrowIfFailed(
+        CreateInputLayoutFromEffect<VertexType>(device, m_effect.get(),
+            m_inputLayout.ReleaseAndGetAddressOf())
+    );
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
 void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
+    
     auto size = m_deviceResources->GetOutputSize();
-    m_fontPos.x = float(size.right) / 2.f;
-    m_fontPos.y = float(size.bottom) / 2.f;
+    Matrix proj = Matrix::CreateScale(2.f / float(size.right), 
+        -2.f / float(size.bottom), 1.f) * Matrix::CreateTranslation(-1.f, 1.f, 0.f);
+    m_effect->SetProjection(proj);
 }
 
 void Game::OnDeviceLost()
@@ -213,8 +247,12 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
     
-    m_font.reset();
-    m_spriteBatch.reset();
+    m_states.reset();
+    m_effect.reset();
+    m_batch.reset();
+    m_inputLayout.Reset();
+    m_texture.Reset();
+    m_normalMap.Reset();
 }
 
 void Game::OnDeviceRestored()

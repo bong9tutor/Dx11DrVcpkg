@@ -66,7 +66,13 @@ private:
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
     
-    std::unique_ptr<DirectX::SpriteFont> m_font;
-    DirectX::SimpleMath::Vector2 m_fontPos;
-    std::unique_ptr<DirectX::SpriteBatch> m_spriteBatch;
+    using VertexType = DirectX::VertexPositionNormalTexture;
+    
+    std::unique_ptr<DirectX::CommonStates>                m_states;
+    std::unique_ptr<DirectX::NormalMapEffect>             m_effect;
+    std::unique_ptr<DirectX::PrimitiveBatch<VertexType>>  m_batch;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout>             m_inputLayout;
+    
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>      m_texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>      m_normalMap;
 };
