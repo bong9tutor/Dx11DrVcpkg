@@ -12,13 +12,24 @@ using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
-Game::Game() noexcept(false)
+Game::Game() noexcept(false) :
+    m_leftBackWheelBone  (ModelBone::c_Invalid),
+    m_rightBackWheelBone (ModelBone::c_Invalid),
+    m_leftFrontWheelBone (ModelBone::c_Invalid),
+    m_rightFrontWheelBone(ModelBone::c_Invalid),
+    m_leftSteerBone      (ModelBone::c_Invalid),
+    m_rightSteerBone     (ModelBone::c_Invalid),
+    m_turretBone         (ModelBone::c_Invalid),
+    m_cannonBone         (ModelBone::c_Invalid),
+    m_hatchBone          (ModelBone::c_Invalid)
 {
     m_deviceResources = std::make_unique<DX::DeviceResources>();
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
     //   Add DX::DeviceResources::c_AllowTearing to opt-in to variable rate displays.
     //   Add DX::DeviceResources::c_EnableHDR for HDR10 display.
     m_deviceResources->RegisterDeviceNotify(this);
+    
+    
 }
 
 // Initialize the Direct3D resources required to run.
@@ -61,8 +72,32 @@ void Game::Update(DX::StepTimer const& timer)
     elapsedTime;
     
     float time = float(timer.GetTotalSeconds());
+    m_world = XMMatrixRotationY(time * 0.1f);
     
-    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
+    float wheelRotation  = time * 5.f;
+    float steerRotation  = sinf(time * 0.75f) * 0.5f;
+    float turretRotation = sinf(time * 0.333f) * 1.25f;
+    float cannonRotation = sinf(time * 0.25f) * 0.333f - 0.333f;
+    float hatchRotation  = std::min(0.f, std::max(sinf(time * 2.f) * 2.f, -1.f));
+    
+    XMMATRIX mat = XMMatrixRotationX(wheelRotation);
+    m_animBones[m_leftFrontWheelBone]  = XMMatrixMultiply(mat, m_model->boneMatrices[m_leftFrontWheelBone]);
+    m_animBones[m_rightFrontWheelBone] = XMMatrixMultiply(mat, m_model->boneMatrices[m_rightFrontWheelBone]);
+    m_animBones[m_leftBackWheelBone]   = XMMatrixMultiply(mat, m_model->boneMatrices[m_leftBackWheelBone]);
+    m_animBones[m_rightBackWheelBone]  = XMMatrixMultiply(mat, m_model->boneMatrices[m_rightBackWheelBone]);
+
+    mat = XMMatrixRotationX(steerRotation);
+    m_animBones[m_leftSteerBone]  = XMMatrixMultiply(mat, m_model->boneMatrices[m_leftSteerBone]);
+    m_animBones[m_rightSteerBone] = XMMatrixMultiply(mat, m_model->boneMatrices[m_rightSteerBone]);
+
+    mat = XMMatrixRotationY(turretRotation);
+    m_animBones[m_turretBone] = XMMatrixMultiply(mat, m_model->boneMatrices[m_turretBone]);
+
+    mat = XMMatrixRotationX(cannonRotation);
+    m_animBones[m_cannonBone] = XMMatrixMultiply(mat, m_model->boneMatrices[m_cannonBone]);
+
+    mat = XMMatrixRotationX(hatchRotation);
+    m_animBones[m_hatchBone] = XMMatrixMultiply(mat, m_model->boneMatrices[m_hatchBone]);
 }
 #pragma endregion
 
@@ -84,7 +119,13 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
     
-    m_model->Draw(context, *m_states, m_world, m_view, m_proj);
+    size_t nbones = m_model->bones.size();
+    
+    m_model->CopyAbsoluteBoneTransforms(nbones, 
+        m_animBones.get(), m_drawBones.get());
+    
+    m_model->Draw(context, *m_states, nbones, m_drawBones.get(), 
+        m_world, m_view, m_proj);
 
     m_deviceResources->PIXEndEvent();
 
@@ -179,33 +220,41 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    m_states    = std::make_unique<CommonStates>(device);
-    m_fxFactory = std::make_unique<DGSLEffectFactory>(device); // DGSLEffect 는 Fog 를 지원 하지 않음
-    SetCurrentDirectory(L"../Models/cup");           // texture 를 못찾는 경우가 있어서, 프로젝트의 현재 위치를 강제 설정
-    m_model     = Model::CreateFromCMO(device, L"cup.cmo", *m_fxFactory);
-    m_world     = Matrix::Identity;
+    m_states = std::make_unique<CommonStates>(device);
+    m_fxFactory = std::make_unique<EffectFactory>(device);
+    SetCurrentDirectory(L"../Models/tank");
+    m_model = Model::CreateFromSDKMESH(device, L"tank.sdkmesh",
+        *m_fxFactory, ModelLoader_CounterClockwise | ModelLoader_IncludeBones);
     
-    m_model->UpdateEffects([](IEffect* effect)
+    const size_t nbones = m_model->bones.size();
+    
+    m_drawBones = ModelBone::MakeArray(nbones);
+    m_animBones = ModelBone::MakeArray(nbones);
+    
+    m_model->CopyBoneTransformsTo(nbones, m_animBones.get());
+    
+    uint32_t index = 0;
+    for (const auto& it : m_model->bones)
     {
-        auto lights = dynamic_cast<IEffectLights*>(effect);
-        if (lights)
+        if (_wcsicmp(it.name.c_str(), L"tank_geo") == 0)
         {
-            lights->SetLightingEnabled(true);
-            lights->SetPerPixelLighting(true);
-            lights->SetLightDiffuseColor(0, Colors::Gold);
-            lights->SetLightEnabled(1, false);
-            lights->SetLightEnabled(2, false);
+            // Need to recenter the model.
+            m_animBones[index] = XMMatrixIdentity();
         }
+        else if (_wcsicmp(it.name.c_str(), L"l_back_wheel_geo" ) == 0) { m_leftBackWheelBone   = index; }
+        else if (_wcsicmp(it.name.c_str(), L"r_back_wheel_geo" ) == 0) { m_rightBackWheelBone  = index; }
+        else if (_wcsicmp(it.name.c_str(), L"l_front_wheel_geo") == 0) { m_leftFrontWheelBone  = index; }
+        else if (_wcsicmp(it.name.c_str(), L"r_front_wheel_geo") == 0) { m_rightFrontWheelBone = index; }
+        else if (_wcsicmp(it.name.c_str(), L"l_steer_geo"      ) == 0) { m_leftSteerBone       = index; }
+        else if (_wcsicmp(it.name.c_str(), L"r_steer_geo"      ) == 0) { m_rightSteerBone      = index; }
+        else if (_wcsicmp(it.name.c_str(), L"turret_geo"       ) == 0) { m_turretBone          = index; }
+        else if (_wcsicmp(it.name.c_str(), L"canon_geo"        ) == 0) { m_cannonBone          = index; }
+        else if (_wcsicmp(it.name.c_str(), L"hatch_geo"        ) == 0) { m_hatchBone           = index; }
         
-        auto fog = dynamic_cast<IEffectFog*>(effect);
-        if (fog)
-        {
-            fog->SetFogEnabled(true);
-            fog->SetFogColor(Colors::CornflowerBlue);
-            fog->SetFogStart(3.0f);
-            fog->SetFogEnd(4.0f);
-        }
-    });
+        ++index;
+    }
+    
+    m_world = Matrix::Identity;
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -214,10 +263,8 @@ void Game::CreateWindowSizeDependentResources()
     // TODO: Initialize windows-size dependent objects here.
     
     auto size = m_deviceResources->GetOutputSize();
-    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f),
-        Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f,
-        float(size.right) / float(size.bottom), 0.1f, 10.0f);
+    m_view = Matrix::CreateLookAt(Vector3(1000, 500, 0), Vector3(0, 150, 0), Vector3::UnitY);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10000.f);
 }
 
 void Game::OnDeviceLost()
