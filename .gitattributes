@@ -4,3 +4,6 @@
 *.dds filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
+*.cmo filter=lfs diff=lfs merge=lfs -text
+*.sdkmesh filter=lfs diff=lfs merge=lfs -text
+*.sdkmesh_anim filter=lfs diff=lfs merge=lfs -text
