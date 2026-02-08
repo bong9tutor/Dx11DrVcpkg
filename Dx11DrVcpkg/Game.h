@@ -9,6 +9,8 @@
 
 #include <memory>
 
+#include "Animation.h"
+
 
 // A basic game implementation that creates a D3D11 device and
 // provides a game loop.
@@ -75,15 +77,6 @@ private:
     std::unique_ptr<DirectX::Model>          m_model;
     
     DirectX::ModelBone::TransformArray m_drawBones;
-    DirectX::ModelBone::TransformArray m_animBones;
     
-    uint32_t m_leftBackWheelBone;
-    uint32_t m_rightBackWheelBone;
-    uint32_t m_leftFrontWheelBone;
-    uint32_t m_rightFrontWheelBone;
-    uint32_t m_leftSteerBone;
-    uint32_t m_rightSteerBone;
-    uint32_t m_turretBone;
-    uint32_t m_cannonBone;
-    uint32_t m_hatchBone;
+    DX::AnimationSDKMESH m_animation;
 };
