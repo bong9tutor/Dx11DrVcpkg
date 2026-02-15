@@ -60,11 +60,9 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
     
-    m_animation.Update(elapsedTime);
-    
-    float time = float(timer.GetTotalSeconds());
-    
-    m_world = XMMatrixRotationY(time);
+    auto time = static_cast<float>(timer.GetTotalSeconds());
+    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
+    // m_effect->SetFresnelFactor(cosf(time * 2.f));
 }
 #pragma endregion
 
@@ -85,12 +83,13 @@ void Game::Render()
 
     // TODO: Add your rendering code here.
     context;
-    
-    size_t nbones = m_model->bones.size();
-    
-    m_animation.Apply(*m_model, nbones, m_drawBones.get());
-    
-    m_model->DrawSkinned(context, *m_states, nbones, m_drawBones.get(), m_world, m_view, m_proj);
+
+    m_effect->SetWorld(m_world);
+    m_shape->Draw(m_effect.get(), m_inputLayout.Get(), false, false, [=]
+    {
+        auto sampler = m_states->LinearWrap();
+        context->PSSetSamplers(1, 1, &sampler);
+    });
     
     m_deviceResources->PIXEndEvent();
 
@@ -185,26 +184,33 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    m_states    = std::make_unique<CommonStates>(device);
-    m_fxFactory = std::make_unique<EffectFactory>(device);
+    m_states = std::make_unique<CommonStates>(device);
     
-    SetCurrentDirectory(L"../Models/soldier");
-    m_model = Model::CreateFromSDKMESH(device, L"soldier.sdkmesh", *m_fxFactory,
-        ModelLoader_Clockwise | ModelLoader_IncludeBones);
+    // m_effect = std::make_unique<NormalMapEffect>(device);
+    // m_effect->EnableDefaultLighting();
     
-    DX::ThrowIfFailed(m_animation.Load(L"soldier.sdkmesh_anim"));
-    m_animation.Bind(*m_model);
+    m_effect = std::make_unique<DebugEffect>(device);
+    m_effect->SetHemisphericalAmbientColor(Colors::DarkBlue, Colors::Purple);
     
-    m_drawBones = ModelBone::MakeArray(m_model->bones.size());
+    auto context = m_deviceResources->GetD3DDeviceContext();
+    m_shape = GeometricPrimitive::CreateTeapot(context);
+    m_shape->CreateInputLayout(m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf());
     
-    m_model->UpdateEffects([&](IEffect* effect)
-    {
-        auto skin = dynamic_cast<SkinnedEffect*>(effect);
-        if (skin)
-        {
-            skin->SetPerPixelLighting(true);
-        }
-    });
+    // SetCurrentDirectory(L"../Models/wood");
+    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"wood.dds",
+    //     nullptr, m_texture.ReleaseAndGetAddressOf()));
+    
+    // m_effect->SetTexture(m_texture.Get());
+    
+    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"cubemap.dds",
+    //    nullptr, m_cubemap.ReleaseAndGetAddressOf()));
+    
+    // m_effect->SetEnvironmentMap(m_cubemap.Get());
+    
+    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"normalMap.dds", nullptr,
+    //     m_normalTexture.ReleaseAndGetAddressOf()));
+    
+    // m_effect->SetNormalTexture(m_normalTexture.Get());
     
     m_world = Matrix::Identity;
 }
@@ -214,12 +220,12 @@ void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
     
-    static const XMVECTORF32 c_cameraPos = { 0.f,   0.f, 1.5f, 0.f };
-    static const XMVECTORF32 c_lookAt    = { 0.f, 0.25f,  0.f, 0.f };
-    
     auto size = m_deviceResources->GetOutputSize();
-    m_view = Matrix::CreateLookAt(c_cameraPos.v, c_lookAt.v, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 1000.f);
+    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.f);
+    
+    m_effect->SetView(m_view);
+    m_effect->SetProjection(m_proj);
 }
 
 void Game::OnDeviceLost()
@@ -228,8 +234,12 @@ void Game::OnDeviceLost()
     m_graphicsMemory.reset();
     
     m_states.reset();
-    m_fxFactory.reset();
-    m_model.reset();
+    m_shape.reset();
+    m_effect.reset();
+    m_inputLayout.Reset();
+    m_texture.Reset();
+    m_cubemap.Reset();
+    m_normalTexture.Reset();
 }
 
 void Game::OnDeviceRestored()

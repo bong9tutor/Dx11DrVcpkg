@@ -9,8 +9,6 @@
 
 #include <memory>
 
-#include "Animation.h"
-
 
 // A basic game implementation that creates a D3D11 device and
 // provides a game loop.
@@ -72,11 +70,15 @@ private:
     DirectX::SimpleMath::Matrix m_view;
     DirectX::SimpleMath::Matrix m_proj;
     
-    std::unique_ptr<DirectX::CommonStates>   m_states;
-    std::unique_ptr<DirectX::IEffectFactory> m_fxFactory;
-    std::unique_ptr<DirectX::Model>          m_model;
+    std::unique_ptr<DirectX::CommonStates>         m_states;
+    std::unique_ptr<DirectX::GeometricPrimitive>   m_shape;
+    //std::unique_ptr<DirectX::EnvironmentMapEffect> m_effect;
+    //std::unique_ptr<DirectX::NormalMapEffect>      m_effect;
+    std::unique_ptr<DirectX::DebugEffect>          m_effect;
     
-    DirectX::ModelBone::TransformArray m_drawBones;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout>        m_inputLayout;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_cubemap;
     
-    DX::AnimationSDKMESH m_animation;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_normalTexture;
 };
