@@ -80,6 +80,8 @@
 #include <codecvt>
 #include <locale>
 
+#include "ReadData.h"
+
 namespace DX
 {
     // Helper class for COM exceptions

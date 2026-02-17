@@ -12,8 +12,12 @@ using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
-Game::Game() noexcept(false) :
-    m_instanceCount(0)
+namespace
+{
+#include "../Shaders/MyDGSLShader/dgslsphere.inc"
+}
+
+Game::Game() noexcept(false)
 {
     m_deviceResources = std::make_unique<DX::DeviceResources>();
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
@@ -62,23 +66,9 @@ void Game::Update(DX::StepTimer const& timer)
     elapsedTime;
     
     auto time = static_cast<float>(timer.GetTotalSeconds());
-    
-    size_t j = 0;
-    for (float y = -6.f; y < 6.f; y += 1.5f)
-    {
-        for (float x = -6.f; x < 6.f; x += 1.5f)
-        {
-            XMMATRIX m = XMMatrixTranslation(x, y,
-                cos(time + float(x) * XM_PIDIV4)
-                * sin(time + float(y) * XM_PIDIV4)
-                * 2.f
-            );
-            XMStoreFloat3x4(&m_instanceTransforms[j], m);
-            ++j;
-        }
-    }
-    
-    assert(j == m_instanceCount);
+    m_effect->SetTime(time);
+    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
+    m_effect->SetWorld(m_world);
 }
 #pragma endregion
 
@@ -99,17 +89,21 @@ void Game::Render()
 
     // TODO: Add your rendering code here.
     context;
-
-    m_shape->DrawInstanced(m_effect.get(), m_instanceLayout.Get(), m_instanceCount, false, false, 0, [=]()
-    {
-        MapGuard map(context, m_instancedVB.Get(),0, D3D11_MAP_WRITE_DISCARD, 0);
-        memcpy(map.pData, m_instanceTransforms.get(), m_instanceCount * sizeof(XMFLOAT3X4));
-        
-        UINT stride = sizeof(XMFLOAT3X4);
-        UINT offset = 0;
-        context->IASetVertexBuffers(1, 1, m_instancedVB.GetAddressOf(), &stride, &offset);
-    });
     
+    m_effect->Apply(context);
+    
+    auto sampler = m_states->LinearWrap();
+    context->PSSetSamplers(0, 1, &sampler);
+    context->RSSetState(m_states->CullClockwise());
+    context->IASetIndexBuffer(m_shapeIB.Get(), DXGI_FORMAT_R16_UINT, 0);
+    context->IASetInputLayout(m_inputLayout.Get());
+    
+    UINT stride = sizeof(VertexPositionNormalTangentColorTexture);
+    UINT offset = 0;
+    context->IASetVertexBuffers(0, 1, m_shapeVB.GetAddressOf(), &stride, &offset);
+    context->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->DrawIndexed(static_cast<UINT>(std::size(g_sphereIB)), 0, 0);
+
     m_deviceResources->PIXEndEvent();
 
     // Show the new frame.
@@ -203,71 +197,34 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    auto context = m_deviceResources->GetD3DDeviceContext();
-    m_shape = GeometricPrimitive::CreateSphere(context);
+    m_states = std::make_unique<CommonStates>(device);
     
-    SetCurrentDirectory(L"../Models/spnza_bricks");
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a.DDS",          nullptr, m_brickDiffuse.ReleaseAndGetAddressOf()));
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a_normal.DDS",   nullptr, m_brickNormal.ReleaseAndGetAddressOf()));
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a_specular.DDS", nullptr, m_brickSpecular.ReleaseAndGetAddressOf()));
+    // Create DGSL Effect
+    SetCurrentDirectory(L"../Shaders/MyDGSLShader");
+    auto blob = DX::ReadData(L"MyDGSLShader.cso");
+    DX::ThrowIfFailed(device->CreatePixelShader(&blob.front(), blob.size(), nullptr, m_pixelShader.ReleaseAndGetAddressOf()));
     
-    m_effect = std::make_unique<NormalMapEffect>(device);
+    m_effect = std::make_unique<DGSLEffect>(device, m_pixelShader.Get());
+    m_effect->SetTextureEnabled(true);
+    m_effect->SetVertexColorEnabled(true);
+    
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"billard15.dds", nullptr, m_texture.ReleaseAndGetAddressOf()));
+    
+    m_effect->SetTexture(m_texture.Get());
+    
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"envmap.dds", nullptr, m_texture2.ReleaseAndGetAddressOf()));
+    
+    m_effect->SetTexture(1, m_texture2.Get());
     m_effect->EnableDefaultLighting();
-    m_effect->SetTexture(m_brickDiffuse.Get());
-    m_effect->SetNormalTexture(m_brickNormal.Get());
-    m_effect->SetSpecularTexture(m_brickSpecular.Get());
-    m_effect->SetInstancingEnabled(true);
     
-    const D3D11_INPUT_ELEMENT_DESC c_InputElements[] =
-    {
-        { "SV_Position", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
-        { "NORMAL",      0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
-        { "TEXCOORD",    0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
-        { "InstMatrix",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-        { "InstMatrix",  1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-        { "InstMatrix",  2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 }
-    };
+    DX::ThrowIfFailed(CreateInputLayoutFromEffect<VertexPositionNormalTangentColorTexture>(device, m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf()));
     
-    DX::ThrowIfFailed(CreateInputLayoutFromEffect(device, m_effect.get(), c_InputElements, std::size(c_InputElements), m_instanceLayout.ReleaseAndGetAddressOf()));
+    // Create sphere geometry with DGSL vertex data
+    DX::ThrowIfFailed(CreateStaticBuffer(device, g_sphereVB, std::size(g_sphereVB), D3D11_BIND_VERTEX_BUFFER, m_shapeVB.ReleaseAndGetAddressOf()));
     
-    // Create instance transforms.
-    {
-        size_t j = 0;
-        for (float y = -6.f; y < 6.f; y += 1.5f)
-        {
-            for (float x = -6.f; x < 6.f; x += 1.5f)
-            {
-                ++j;
-            }
-        }
-        m_instanceCount = static_cast<UINT>(j);
-        
-        m_instanceTransforms = std::make_unique<XMFLOAT3X4[]>(j);
-        constexpr XMFLOAT3X4 s_identity = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f };
-        
-        j = 0;
-        for (float y = -6.f; y < 6.f; y += 1.5f)
-        {
-            for (float x = -6.f; x < 6.f; x += 1.5f)
-            {
-                m_instanceTransforms[j] = s_identity;
-                m_instanceTransforms[j]._14 = x;
-                m_instanceTransforms[j]._24 = y;
-                ++j;
-            }
-        }
-        
-        auto desc = CD3D11_BUFFER_DESC(
-            static_cast<UINT>(j * sizeof(XMFLOAT3X4)),
-            D3D11_BIND_VERTEX_BUFFER,
-            D3D11_USAGE_DYNAMIC,
-            D3D11_CPU_ACCESS_WRITE
-        );
-        
-        D3D11_SUBRESOURCE_DATA initData = { m_instanceTransforms.get(), 0, 0 };
-        
-        DX::ThrowIfFailed(device->CreateBuffer(&desc, &initData, m_instancedVB.ReleaseAndGetAddressOf()));
-    }
+    DX::ThrowIfFailed(CreateStaticBuffer(device, g_sphereIB, std::size(g_sphereIB), D3D11_BIND_INDEX_BUFFER, m_shapeIB.ReleaseAndGetAddressOf()));
+    
+    m_world = Matrix::Identity;
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -276,8 +233,10 @@ void Game::CreateWindowSizeDependentResources()
     // TODO: Initialize windows-size dependent objects here.
     
     auto size = m_deviceResources->GetOutputSize();
-    m_view = Matrix::CreateLookAt(Vector3(0.f, 0.f, 12.f), Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 25.f);
+    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.0f);
+    
+    m_effect->SetViewport(float(size.right), float(size.bottom));
     
     m_effect->SetView(m_view);
     m_effect->SetProjection(m_proj);
@@ -288,13 +247,14 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
     
+    m_states.reset();
     m_effect.reset();
-    m_shape.reset();
-    m_instanceLayout.Reset();
-    m_instancedVB.Reset();
-    m_brickDiffuse.Reset();
-    m_brickNormal.Reset();
-    m_brickSpecular.Reset();
+    m_shapeVB.Reset();
+    m_shapeIB.Reset();
+    m_inputLayout.Reset();
+    m_texture.Reset();
+    m_texture2.Reset();
+    m_pixelShader.Reset();
 }
 
 void Game::OnDeviceRestored()

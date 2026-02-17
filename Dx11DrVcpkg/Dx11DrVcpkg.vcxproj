@@ -42,6 +42,7 @@
     <VcpkgPageSchema>$(VCInstallDir)vcpkg\scripts\buildsystems\msbuild\vcpkg-general.xml</VcpkgPageSchema>
   </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\ShaderGraphContentTask.props" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -137,12 +138,16 @@
     <Manifest Include="settings.manifest" />
   </ItemGroup>
   <ItemGroup>
+    <ShaderGraphContentTask Include="..\Shaders\MyDGSLShader\MyDGSLShader.dgsl">
+      <FileType>Document</FileType>
+    </ShaderGraphContentTask>
     <None Include="vcpkg-configuration.json" />
     <None Include="vcpkg.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Condition="Exists('$(VCInstallDir)vcpkg\scripts\buildsystems\msbuild\vcpkg.targets')" Project="$(VCInstallDir)vcpkg\scripts\buildsystems\msbuild\vcpkg.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\ShaderGraphContentTask.targets" />
   </ImportGroup>
   <Target Name="EnsureVCPKG" BeforeTargets="_CheckForInvalidConfigurationAndPlatform">
     <PropertyGroup>

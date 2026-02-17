@@ -40,4 +40,7 @@
       <Filter>Assets</Filter>
     </Manifest>
   </ItemGroup>
+  <ItemGroup>
+    <ShaderGraphContentTask Include="..\Shaders\MyDGSLShader\MyDGSLShader.dgsl" />
+  </ItemGroup>
 </Project>
