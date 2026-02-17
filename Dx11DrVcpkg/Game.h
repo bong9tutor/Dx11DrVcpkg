@@ -66,19 +66,19 @@ private:
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
     
-    DirectX::SimpleMath::Matrix m_world;
     DirectX::SimpleMath::Matrix m_view;
     DirectX::SimpleMath::Matrix m_proj;
     
-    std::unique_ptr<DirectX::CommonStates>         m_states;
-    std::unique_ptr<DirectX::GeometricPrimitive>   m_shape;
-    //std::unique_ptr<DirectX::EnvironmentMapEffect> m_effect;
-    //std::unique_ptr<DirectX::NormalMapEffect>      m_effect;
-    std::unique_ptr<DirectX::DebugEffect>          m_effect;
+    std::unique_ptr<DirectX::NormalMapEffect>    m_effect;
+    std::unique_ptr<DirectX::GeometricPrimitive> m_shape;
     
-    Microsoft::WRL::ComPtr<ID3D11InputLayout>        m_inputLayout;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_texture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_cubemap;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> m_instanceLayout;
+    Microsoft::WRL::ComPtr<ID3D11Buffer>      m_instancedVB;
     
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_normalTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_brickDiffuse;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_brickNormal;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_brickSpecular;
+    
+    UINT m_instanceCount;
+    std::unique_ptr<DirectX::XMFLOAT3X4[]> m_instanceTransforms;
 };

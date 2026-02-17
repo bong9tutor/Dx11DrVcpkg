@@ -12,7 +12,8 @@ using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
-Game::Game() noexcept(false)
+Game::Game() noexcept(false) :
+    m_instanceCount(0)
 {
     m_deviceResources = std::make_unique<DX::DeviceResources>();
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
@@ -61,8 +62,23 @@ void Game::Update(DX::StepTimer const& timer)
     elapsedTime;
     
     auto time = static_cast<float>(timer.GetTotalSeconds());
-    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
-    // m_effect->SetFresnelFactor(cosf(time * 2.f));
+    
+    size_t j = 0;
+    for (float y = -6.f; y < 6.f; y += 1.5f)
+    {
+        for (float x = -6.f; x < 6.f; x += 1.5f)
+        {
+            XMMATRIX m = XMMatrixTranslation(x, y,
+                cos(time + float(x) * XM_PIDIV4)
+                * sin(time + float(y) * XM_PIDIV4)
+                * 2.f
+            );
+            XMStoreFloat3x4(&m_instanceTransforms[j], m);
+            ++j;
+        }
+    }
+    
+    assert(j == m_instanceCount);
 }
 #pragma endregion
 
@@ -84,11 +100,14 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
 
-    m_effect->SetWorld(m_world);
-    m_shape->Draw(m_effect.get(), m_inputLayout.Get(), false, false, [=]
+    m_shape->DrawInstanced(m_effect.get(), m_instanceLayout.Get(), m_instanceCount, false, false, 0, [=]()
     {
-        auto sampler = m_states->LinearWrap();
-        context->PSSetSamplers(1, 1, &sampler);
+        MapGuard map(context, m_instancedVB.Get(),0, D3D11_MAP_WRITE_DISCARD, 0);
+        memcpy(map.pData, m_instanceTransforms.get(), m_instanceCount * sizeof(XMFLOAT3X4));
+        
+        UINT stride = sizeof(XMFLOAT3X4);
+        UINT offset = 0;
+        context->IASetVertexBuffers(1, 1, m_instancedVB.GetAddressOf(), &stride, &offset);
     });
     
     m_deviceResources->PIXEndEvent();
@@ -184,35 +203,71 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
-    m_states = std::make_unique<CommonStates>(device);
-    
-    // m_effect = std::make_unique<NormalMapEffect>(device);
-    // m_effect->EnableDefaultLighting();
-    
-    m_effect = std::make_unique<DebugEffect>(device);
-    m_effect->SetHemisphericalAmbientColor(Colors::DarkBlue, Colors::Purple);
-    
     auto context = m_deviceResources->GetD3DDeviceContext();
-    m_shape = GeometricPrimitive::CreateTeapot(context);
-    m_shape->CreateInputLayout(m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf());
+    m_shape = GeometricPrimitive::CreateSphere(context);
     
-    // SetCurrentDirectory(L"../Models/wood");
-    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"wood.dds",
-    //     nullptr, m_texture.ReleaseAndGetAddressOf()));
+    SetCurrentDirectory(L"../Models/spnza_bricks");
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a.DDS",          nullptr, m_brickDiffuse.ReleaseAndGetAddressOf()));
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a_normal.DDS",   nullptr, m_brickNormal.ReleaseAndGetAddressOf()));
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"spnza_bricks_a_specular.DDS", nullptr, m_brickSpecular.ReleaseAndGetAddressOf()));
     
-    // m_effect->SetTexture(m_texture.Get());
+    m_effect = std::make_unique<NormalMapEffect>(device);
+    m_effect->EnableDefaultLighting();
+    m_effect->SetTexture(m_brickDiffuse.Get());
+    m_effect->SetNormalTexture(m_brickNormal.Get());
+    m_effect->SetSpecularTexture(m_brickSpecular.Get());
+    m_effect->SetInstancingEnabled(true);
     
-    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"cubemap.dds",
-    //    nullptr, m_cubemap.ReleaseAndGetAddressOf()));
+    const D3D11_INPUT_ELEMENT_DESC c_InputElements[] =
+    {
+        { "SV_Position", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
+        { "NORMAL",      0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
+        { "TEXCOORD",    0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA,   0 },
+        { "InstMatrix",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+        { "InstMatrix",  1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+        { "InstMatrix",  2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 }
+    };
     
-    // m_effect->SetEnvironmentMap(m_cubemap.Get());
+    DX::ThrowIfFailed(CreateInputLayoutFromEffect(device, m_effect.get(), c_InputElements, std::size(c_InputElements), m_instanceLayout.ReleaseAndGetAddressOf()));
     
-    // DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"normalMap.dds", nullptr,
-    //     m_normalTexture.ReleaseAndGetAddressOf()));
-    
-    // m_effect->SetNormalTexture(m_normalTexture.Get());
-    
-    m_world = Matrix::Identity;
+    // Create instance transforms.
+    {
+        size_t j = 0;
+        for (float y = -6.f; y < 6.f; y += 1.5f)
+        {
+            for (float x = -6.f; x < 6.f; x += 1.5f)
+            {
+                ++j;
+            }
+        }
+        m_instanceCount = static_cast<UINT>(j);
+        
+        m_instanceTransforms = std::make_unique<XMFLOAT3X4[]>(j);
+        constexpr XMFLOAT3X4 s_identity = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f };
+        
+        j = 0;
+        for (float y = -6.f; y < 6.f; y += 1.5f)
+        {
+            for (float x = -6.f; x < 6.f; x += 1.5f)
+            {
+                m_instanceTransforms[j] = s_identity;
+                m_instanceTransforms[j]._14 = x;
+                m_instanceTransforms[j]._24 = y;
+                ++j;
+            }
+        }
+        
+        auto desc = CD3D11_BUFFER_DESC(
+            static_cast<UINT>(j * sizeof(XMFLOAT3X4)),
+            D3D11_BIND_VERTEX_BUFFER,
+            D3D11_USAGE_DYNAMIC,
+            D3D11_CPU_ACCESS_WRITE
+        );
+        
+        D3D11_SUBRESOURCE_DATA initData = { m_instanceTransforms.get(), 0, 0 };
+        
+        DX::ThrowIfFailed(device->CreateBuffer(&desc, &initData, m_instancedVB.ReleaseAndGetAddressOf()));
+    }
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -221,8 +276,8 @@ void Game::CreateWindowSizeDependentResources()
     // TODO: Initialize windows-size dependent objects here.
     
     auto size = m_deviceResources->GetOutputSize();
-    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.f);
+    m_view = Matrix::CreateLookAt(Vector3(0.f, 0.f, 12.f), Vector3::Zero, Vector3::UnitY);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 25.f);
     
     m_effect->SetView(m_view);
     m_effect->SetProjection(m_proj);
@@ -233,13 +288,13 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
     
-    m_states.reset();
-    m_shape.reset();
     m_effect.reset();
-    m_inputLayout.Reset();
-    m_texture.Reset();
-    m_cubemap.Reset();
-    m_normalTexture.Reset();
+    m_shape.reset();
+    m_instanceLayout.Reset();
+    m_instancedVB.Reset();
+    m_brickDiffuse.Reset();
+    m_brickNormal.Reset();
+    m_brickSpecular.Reset();
 }
 
 void Game::OnDeviceRestored()
