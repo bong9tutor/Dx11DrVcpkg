@@ -10,20 +10,110 @@ extern void ExitGame() noexcept;
 using namespace DirectX;
 using namespace DirectX::SimpleMath;
 
-using Microsoft::WRL::ComPtr;
-
 namespace
 {
-#include "../Shaders/MyDGSLShader/dgslsphere.inc"
+    struct VS_BLOOM_PARAMETERS
+    {
+        float bloomThreshold;
+        float blurAmount;
+        float bloomIntensity;
+        float baseIntensity;
+        float bloomSaturation;
+        float baseSaturation;
+        uint8_t na[8];
+    };
+    
+    static_assert(!(sizeof(VS_BLOOM_PARAMETERS) % 16), "VS_BLOOM_PARAMETERS needs to be 16 bytes aligned");
+    
+    struct VS_BLUR_PARAMETERS
+    {
+        static constexpr size_t SAMPLE_COUNT = 15;
+        
+        XMFLOAT4 sampleOffsets[SAMPLE_COUNT];
+        XMFLOAT4 sampleWeights[SAMPLE_COUNT];
+        
+        void SetBlurEffectParameters(float dx, float dy, const VS_BLOOM_PARAMETERS& params)
+        {
+            sampleWeights[0].x = ComputeGaussian(0, params.blurAmount);
+            sampleOffsets[0].x = sampleOffsets[0].y = 0.f;
+            
+            float totalWeights = sampleWeights[0].x;
+            
+            for (size_t i = 0; i < SAMPLE_COUNT / 2; i++)
+            {
+                float weight = ComputeGaussian(float(i + 1.f), params.blurAmount);
+                
+                sampleWeights[i * 2 + 1].x = weight;
+                sampleWeights[i * 2 + 2].x = weight;
+                
+                totalWeights += weight * 2;
+                
+                float sampleOffset = float(i) * 2.f + 1.5f;
+                
+                Vector2 delta = Vector2(dx, dy) * sampleOffset;
+                
+                sampleOffsets[i * 2 + 1].x =  delta.x;
+                sampleOffsets[i * 2 + 1].y =  delta.y;
+                sampleOffsets[i * 2 + 2].x = -delta.x;
+                sampleOffsets[i * 2 + 2].y = -delta.y;
+            }
+            
+            for (size_t i = 0; i < SAMPLE_COUNT; i++)
+            {
+                sampleWeights[i].x /= totalWeights;
+            }
+        }
+        
+    private:
+        float ComputeGaussian(float n, float theta)
+        {
+            return (float)((1.0 / sqrtf(2 * XM_PI * theta)) * expf(-(n * n) / (2 * theta * theta)));
+        }
+    };
+    
+    static_assert(!(sizeof(VS_BLUR_PARAMETERS) & 16), "VS_BLUR_PARAMETERS needs to be 16 bytes aligned");
+    
+    enum BloomPresets
+    {
+        Default = 0,
+        Soft,
+        Desaturated,
+        Saturated,
+        Blurry,
+        Subtle,
+        None
+    };
+    
+    BloomPresets g_Bloom = Saturated;
+    
+    static const VS_BLOOM_PARAMETERS g_BloomPresets[] =
+    {
+        { 0.25f, 4, 1.25f, 1,    1, 1 }, // Default
+        { 0,     3, 1,     1,    1, 1 }, // Soft
+        { 0.5f,  8, 2,     1,    0, 1 }, // Desaturated
+        { 0.25f, 4, 2,     1,    2, 0 }, // Saturated
+        { 0,     2, 1,     0.1f, 1, 1 }, // Blurry
+        { 0.5f,  2, 1,     1,    0, 1 }, // Subtle
+        { 0.25f, 4, 1.25f, 1,    2, 0 }  // None
+    };
 }
 
-Game::Game() noexcept(false)
+using Microsoft::WRL::ComPtr;
+
+Game::Game() noexcept(false) :
+    m_fullscreenRect{},
+    m_bloomRect{}
 {
     m_deviceResources = std::make_unique<DX::DeviceResources>();
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
     //   Add DX::DeviceResources::c_AllowTearing to opt-in to variable rate displays.
     //   Add DX::DeviceResources::c_EnableHDR for HDR10 display.
     m_deviceResources->RegisterDeviceNotify(this);
+    
+    const auto format = m_deviceResources->GetBackBufferFormat();
+    m_offscreenTexture = std::make_unique<DX::RenderTexture>(format);
+    m_renderTarget1 = std::make_unique<DX::RenderTexture>(format);
+    m_renderTarget2 = std::make_unique<DX::RenderTexture>(format);
 }
 
 // Initialize the Direct3D resources required to run.
@@ -65,10 +155,11 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
     
-    auto time = static_cast<float>(timer.GetTotalSeconds());
-    m_effect->SetTime(time);
-    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
-    m_effect->SetWorld(m_world);
+    auto totalTime = static_cast<float>(timer.GetTotalSeconds());
+    
+    m_world = Matrix::CreateRotationZ(totalTime / 2.f)
+        * Matrix::CreateRotationY(totalTime)
+        * Matrix::CreateRotationX(totalTime / 2.f);
 }
 #pragma endregion
 
@@ -90,22 +181,16 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
     
-    m_effect->Apply(context);
-    
-    auto sampler = m_states->LinearWrap();
-    context->PSSetSamplers(0, 1, &sampler);
-    context->RSSetState(m_states->CullClockwise());
-    context->IASetIndexBuffer(m_shapeIB.Get(), DXGI_FORMAT_R16_UINT, 0);
-    context->IASetInputLayout(m_inputLayout.Get());
-    
-    UINT stride = sizeof(VertexPositionNormalTangentColorTexture);
-    UINT offset = 0;
-    context->IASetVertexBuffers(0, 1, m_shapeVB.GetAddressOf(), &stride, &offset);
-    context->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->DrawIndexed(static_cast<UINT>(std::size(g_sphereIB)), 0, 0);
+    m_spriteBatch->Begin();
+    m_spriteBatch->Draw(m_background.Get(), m_fullscreenRect);
+    m_spriteBatch->End();
+
+    m_shape->Draw(m_world, m_view, m_proj);
 
     m_deviceResources->PIXEndEvent();
 
+    PostProcess();
+    
     // Show the new frame.
     m_deviceResources->Present();
     m_graphicsMemory->Commit();
@@ -118,7 +203,7 @@ void Game::Clear()
 
     // Clear the views.
     auto context = m_deviceResources->GetD3DDeviceContext();
-    auto renderTarget = m_deviceResources->GetRenderTargetView();
+    auto renderTarget = m_offscreenTexture->GetRenderTargetView();
     auto depthStencil = m_deviceResources->GetDepthStencilView();
 
     context->ClearRenderTargetView(renderTarget, Colors::CornflowerBlue);
@@ -128,7 +213,7 @@ void Game::Clear()
     // Set the viewport.
     const auto viewport = m_deviceResources->GetScreenViewport();
     context->RSSetViewports(1, &viewport);
-
+    
     m_deviceResources->PIXEndEvent();
 }
 #pragma endregion
@@ -197,34 +282,42 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
     
+    SetCurrentDirectory(L"../Images");
+    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"sunset.jpg", nullptr, m_background.ReleaseAndGetAddressOf()));
+    
+    // Load HLSL Shaders
+    auto blob = DX::ReadData(L"BloomExtract.cso");
+    DX::ThrowIfFailed(device->CreatePixelShader(blob.data(), blob.size(), nullptr, m_bloomExtractPS.ReleaseAndGetAddressOf()));
+    
+    blob = DX::ReadData(L"BloomCombine.cso");
+    DX::ThrowIfFailed(device->CreatePixelShader(blob.data(), blob.size(), nullptr, m_bloomCombinePS.ReleaseAndGetAddressOf()));
+    
+    blob = DX::ReadData(L"GaussianBlur.cso");
+    DX::ThrowIfFailed(device->CreatePixelShader(blob.data(), blob.size(), nullptr, m_gaussianBlurPS.ReleaseAndGetAddressOf()));
+    
+    {
+        CD3D11_BUFFER_DESC cbDesc(sizeof(VS_BLOOM_PARAMETERS), D3D11_BIND_CONSTANT_BUFFER);
+        D3D11_SUBRESOURCE_DATA initData = { &g_BloomPresets[g_Bloom], 0, 0 };
+        DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, &initData, m_bloomParams.ReleaseAndGetAddressOf()));
+    }
+    
+    {
+        CD3D11_BUFFER_DESC cbDesc(sizeof(VS_BLUR_PARAMETERS), D3D11_BIND_CONSTANT_BUFFER);
+        DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, nullptr, m_blurParamsWidth.ReleaseAndGetAddressOf()));
+        DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, nullptr, m_blurParamsHeight.ReleaseAndGetAddressOf()));
+    }
+    
+    m_offscreenTexture->SetDevice(device);
+    m_renderTarget1->SetDevice(device);
+    m_renderTarget2->SetDevice(device);
+    
     m_states = std::make_unique<CommonStates>(device);
     
-    // Create DGSL Effect
-    SetCurrentDirectory(L"../Shaders/MyDGSLShader");
-    auto blob = DX::ReadData(L"MyDGSLShader.cso");
-    DX::ThrowIfFailed(device->CreatePixelShader(&blob.front(), blob.size(), nullptr, m_pixelShader.ReleaseAndGetAddressOf()));
+    auto context = m_deviceResources->GetD3DDeviceContext();
+    m_spriteBatch = std::make_unique<SpriteBatch>(context);
+    m_shape = GeometricPrimitive::CreateTorus(context);
     
-    m_effect = std::make_unique<DGSLEffect>(device, m_pixelShader.Get());
-    m_effect->SetTextureEnabled(true);
-    m_effect->SetVertexColorEnabled(true);
-    
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"billard15.dds", nullptr, m_texture.ReleaseAndGetAddressOf()));
-    
-    m_effect->SetTexture(m_texture.Get());
-    
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"envmap.dds", nullptr, m_texture2.ReleaseAndGetAddressOf()));
-    
-    m_effect->SetTexture(1, m_texture2.Get());
-    m_effect->EnableDefaultLighting();
-    
-    DX::ThrowIfFailed(CreateInputLayoutFromEffect<VertexPositionNormalTangentColorTexture>(device, m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf()));
-    
-    // Create sphere geometry with DGSL vertex data
-    DX::ThrowIfFailed(CreateStaticBuffer(device, g_sphereVB, std::size(g_sphereVB), D3D11_BIND_VERTEX_BUFFER, m_shapeVB.ReleaseAndGetAddressOf()));
-    
-    DX::ThrowIfFailed(CreateStaticBuffer(device, g_sphereIB, std::size(g_sphereIB), D3D11_BIND_INDEX_BUFFER, m_shapeIB.ReleaseAndGetAddressOf()));
-    
-    m_world = Matrix::Identity;
+    m_view = Matrix::CreateLookAt(Vector3(0.f, 3.f, -3.f), Vector3::Zero, Vector3::UnitY);
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
@@ -233,13 +326,99 @@ void Game::CreateWindowSizeDependentResources()
     // TODO: Initialize windows-size dependent objects here.
     
     auto size = m_deviceResources->GetOutputSize();
-    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.0f);
+    m_fullscreenRect = size;
     
-    m_effect->SetViewport(float(size.right), float(size.bottom));
+    auto context = m_deviceResources->GetD3DDeviceContext();
     
-    m_effect->SetView(m_view);
-    m_effect->SetProjection(m_proj);
+    VS_BLUR_PARAMETERS blurData = {};
+    blurData.SetBlurEffectParameters(1.f / (float(size.right) / 2), 0, g_BloomPresets[g_Bloom]);
+    context->UpdateSubresource(m_blurParamsWidth.Get(), 0, nullptr, &blurData, sizeof(VS_BLUR_PARAMETERS), 0);
+    
+    blurData.SetBlurEffectParameters(0, 1.f / (float(size.bottom) / 2), g_BloomPresets[g_Bloom]);
+    context->UpdateSubresource(m_blurParamsHeight.Get(), 0, nullptr, &blurData, sizeof(VS_BLUR_PARAMETERS), 0);
+    
+    m_offscreenTexture->SetWindow(size);
+    
+    // Half-size blurring render targets
+    m_bloomRect = { 0, 0, size.right / 2, size.bottom / 2 };
+    
+    m_renderTarget1->SetWindow(m_bloomRect);
+    m_renderTarget2->SetWindow(m_bloomRect);
+    
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PIDIV4, float(size.right) / float(size.bottom), 0.01f, 100.f);
+}
+
+void Game::PostProcess()
+{
+    auto context = m_deviceResources->GetD3DDeviceContext();
+
+    ID3D11ShaderResourceView* null[] = { nullptr, nullptr };
+
+    if (g_Bloom == None)
+    {
+        // Pass-through test
+        context->CopyResource(m_deviceResources->GetRenderTarget(),
+            m_offscreenTexture->GetRenderTarget());
+    }
+    else
+    {
+        // scene -> RT1 (downsample)
+        auto rt1RT = m_renderTarget1->GetRenderTargetView();
+        context->OMSetRenderTargets(1, &rt1RT, nullptr);
+        m_spriteBatch->Begin(SpriteSortMode_Immediate,
+            nullptr, nullptr, nullptr, nullptr,
+            [=](){
+                context->PSSetConstantBuffers(0, 1, m_bloomParams.GetAddressOf());
+                context->PSSetShader(m_bloomExtractPS.Get(), nullptr, 0);
+            });
+        auto rtSRV = m_offscreenTexture->GetShaderResourceView();
+        m_spriteBatch->Draw(rtSRV, m_bloomRect);
+        m_spriteBatch->End();
+
+        // RT1 -> RT2 (blur horizontal)
+        auto rt2RT = m_renderTarget2->GetRenderTargetView();
+        context->OMSetRenderTargets(1, &rt2RT, nullptr);
+        m_spriteBatch->Begin(SpriteSortMode_Immediate,
+            nullptr, nullptr, nullptr, nullptr,
+            [=](){
+                context->PSSetShader(m_gaussianBlurPS.Get(), nullptr, 0);
+                context->PSSetConstantBuffers(0, 1,
+                    m_blurParamsWidth.GetAddressOf());
+            });
+        auto rt1SRV = m_renderTarget1->GetShaderResourceView();
+        m_spriteBatch->Draw(rt1SRV, m_bloomRect);
+        m_spriteBatch->End();
+
+        context->PSSetShaderResources(0, 2, null);
+
+        // RT2 -> RT1 (blur vertical)
+        context->OMSetRenderTargets(1, &rt1RT, nullptr);
+        m_spriteBatch->Begin(SpriteSortMode_Immediate,
+            nullptr, nullptr, nullptr, nullptr,
+            [=](){
+                context->PSSetShader(m_gaussianBlurPS.Get(), nullptr, 0);
+                context->PSSetConstantBuffers(0, 1,
+                    m_blurParamsHeight.GetAddressOf());
+            });
+        auto rt2SRV = m_renderTarget2->GetShaderResourceView();
+        m_spriteBatch->Draw(rt2SRV, m_bloomRect);
+        m_spriteBatch->End();
+
+        // RT1 + scene
+        auto renderTarget = m_deviceResources->GetRenderTargetView();
+        context->OMSetRenderTargets(1, &renderTarget, nullptr);
+        m_spriteBatch->Begin(SpriteSortMode_Immediate,
+            nullptr, nullptr, nullptr, nullptr,
+            [=](){
+                context->PSSetShader(m_bloomCombinePS.Get(), nullptr, 0);
+                context->PSSetShaderResources(1, 1, &rt1SRV);
+                context->PSSetConstantBuffers(0, 1, m_bloomParams.GetAddressOf());
+            });
+        m_spriteBatch->Draw(rtSRV, m_fullscreenRect);
+        m_spriteBatch->End();
+    }
+
+    context->PSSetShaderResources(0, 2, null);
 }
 
 void Game::OnDeviceLost()
@@ -248,13 +427,21 @@ void Game::OnDeviceLost()
     m_graphicsMemory.reset();
     
     m_states.reset();
-    m_effect.reset();
-    m_shapeVB.Reset();
-    m_shapeIB.Reset();
-    m_inputLayout.Reset();
-    m_texture.Reset();
-    m_texture2.Reset();
-    m_pixelShader.Reset();
+    m_spriteBatch.reset();
+    m_shape.reset();
+    m_background.Reset();
+    
+    m_bloomExtractPS.Reset();
+    m_bloomCombinePS.Reset();
+    m_gaussianBlurPS.Reset();
+    
+    m_bloomParams.Reset();
+    m_blurParamsWidth.Reset();
+    m_blurParamsHeight.Reset();
+    
+    m_offscreenTexture->ReleaseDevice();
+    m_renderTarget1->ReleaseDevice();
+    m_renderTarget2->ReleaseDevice();
 }
 
 void Game::OnDeviceRestored()
