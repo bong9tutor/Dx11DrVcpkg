@@ -14,15 +14,9 @@ using Microsoft::WRL::ComPtr;
 
 Game::Game() noexcept(false)
 {
-    // m_deviceResources = std::make_unique<DX::DeviceResources>(
-    //     DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_D32_FLOAT, 2, D3D_FEATURE_LEVEL_10_0
-    // );
-    // HDR 10 Display Output
     m_deviceResources = std::make_unique<DX::DeviceResources>(
-        DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_D32_FLOAT, 2, D3D_FEATURE_LEVEL_10_0,
-        DX::DeviceResources::c_EnableHDR
+        DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_D32_FLOAT, 2, D3D_FEATURE_LEVEL_10_0
     );
-
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
     //   Add DX::DeviceResources::c_AllowTearing to opt-in to variable rate displays.
     //   Add DX::DeviceResources::c_EnableHDR for HDR10 display.
@@ -70,11 +64,8 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
 
-    auto time = static_cast<float>(m_timer.GetTotalSeconds());
-
-    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
-
-    m_colorScale = 1.f + sinf(time);
+    auto time = static_cast<float>(timer.GetTotalSeconds());
+    m_world = Matrix::CreateRotationY(cosf(time) * 2.f);
 }
 #pragma endregion
 
@@ -96,42 +87,25 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
 
-    m_shape->Draw(m_world, m_view, m_proj, XMVectorSetW(Colors::White * m_colorScale, 1.f));
+    m_effect->SetWorld(m_world);
+    m_shape->Draw(m_effect.get(), m_inputLayout.Get(), false, false, [=]
+    {
+        ID3D11SamplerState* samplers[] =
+        {
+            m_states->AnisotropicClamp(),
+            m_states->LinearWrap()
+        };
+        context->PSSetSamplers(0, 2, samplers);
+    });
 
+    // Tonemap
     auto renderTarget = m_deviceResources->GetRenderTargetView();
     context->OMSetRenderTargets(1, &renderTarget, nullptr);
 
-    // HDR10 디스플레이 출력을 위해서는 Windows 10 Creators Update가 설치된 PC에 HDMI 2.0으로 연결된 4K UHD 모니터가 필요
-    // HDR 디스플레이에 있는 경우 HDR을 사용 (막눈이라 뭐가 다른지 모르겠음..)
-    {
-        switch (m_deviceResources->GetColorSpace())
-        {
-        default:
-            m_toneMap->SetOperator(ToneMapPostProcess::ACESFilmic);
-            m_toneMap->SetTransferFunction(
-                (m_deviceResources->GetBackBufferFormat() == DXGI_FORMAT_R16G16B16A16_FLOAT)
-                ? ToneMapPostProcess::Linear : ToneMapPostProcess::SRGB);
-            break;
-
-        case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
-            m_toneMap->SetOperator(ToneMapPostProcess::None);
-            m_toneMap->SetTransferFunction(ToneMapPostProcess::ST2084);
-            break;
-
-        case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
-            // Required if R16G16B16A16_FLOAT is used as display format
-            // (otherwise you can omit this case)
-            m_toneMap->SetOperator(ToneMapPostProcess::None);
-            m_toneMap->SetTransferFunction(ToneMapPostProcess::Linear);
-            break;
-        }
-
-    }
-
     m_toneMap->Process(context);
 
-    ID3D11ShaderResourceView* nullsrv[] = { nullptr };
-    context->PSSetShaderResources(0, 1, nullsrv);
+    ID3D11ShaderResourceView* nullsrvs[] = { nullptr };
+    context->PSSetShaderResources(0, 1, nullsrvs);
 
     m_deviceResources->PIXEndEvent();
 
@@ -230,16 +204,39 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
 
+    m_states = std::make_unique<CommonStates>(device);
+    m_effect = std::make_unique<DirectX::PBREffect>(device);
+    m_effect->EnableDefaultLighting();
+
+    auto context = m_deviceResources->GetD3DDeviceContext();
+    m_shape = GeometricPrimitive::CreateSphere(context);
+    m_shape->CreateInputLayout(m_effect.get(), m_inputLayout.ReleaseAndGetAddressOf());
+
+    SetCurrentDirectory(L"../Images");
+
+    // Image-based lighting cubemaps.
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"SunSubMixer_diffuseIBL.dds", nullptr, m_radiance.ReleaseAndGetAddressOf()));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
+    m_radiance->GetDesc(&desc);
+
+    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"SunSubMixer_specularIBL.dds", nullptr, m_irradiance.ReleaseAndGetAddressOf()));
+
+    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"Sphere2Mat_baseColor.png", nullptr, m_albedoMap.ReleaseAndGetAddressOf()));
+    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"Sphere2Mat_normal.png",    nullptr, m_normalMap.ReleaseAndGetAddressOf()));
+    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"Sphere2Mat_occlusionRoughnessMetallic.png", nullptr, m_rmaMap.ReleaseAndGetAddressOf()));
+    DX::ThrowIfFailed(CreateWICTextureFromFile(device, L"Sphere2Mat_emissive.png",  nullptr, m_emissiveMap.ReleaseAndGetAddressOf()));
+
+    m_effect->SetSurfaceTextures(m_albedoMap.Get(), m_normalMap.Get(), m_rmaMap.Get());
+    m_effect->SetEmissiveTexture(m_emissiveMap.Get());
+
+    m_effect->SetIBLTextures(m_radiance.Get(), static_cast<int>(desc.TextureCube.MipLevels), m_irradiance.Get());
+
     m_hdrScene->SetDevice(device);
 
     m_toneMap = std::make_unique<DirectX::ToneMapPostProcess>(device);
-
-    // Set tone-mapper as 'pass-through' for now...
-    m_toneMap->SetOperator(ToneMapPostProcess::ACESFilmic);
+    m_toneMap->SetOperator(ToneMapPostProcess::Reinhard);
     m_toneMap->SetTransferFunction(ToneMapPostProcess::SRGB);
-
-    auto context = m_deviceResources->GetD3DDeviceContext();
-    m_shape = GeometricPrimitive::CreateTeapot(context);
 
     m_world = Matrix::Identity;
 }
@@ -248,13 +245,16 @@ void Game::CreateDeviceDependentResources()
 void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
+
     auto size = m_deviceResources->GetOutputSize();
-    m_hdrScene->SetWindow(size);
-
-    m_toneMap->SetHDRSourceTexture(m_hdrScene->GetShaderResourceView());
-
     m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
     m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.0f);
+
+    m_effect->SetView(m_view);
+    m_effect->SetProjection(m_proj);
+
+    m_hdrScene->SetWindow(size);
+    m_toneMap->SetHDRSourceTexture(m_hdrScene->GetShaderResourceView());
 }
 
 void Game::OnDeviceLost()
@@ -262,9 +262,18 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
 
+    m_states.reset();
+    m_shape.reset();
+    m_effect.reset();
+    m_inputLayout.Reset();
+    m_radiance.Reset();
+    m_irradiance.Reset();
     m_hdrScene->ReleaseDevice();
     m_toneMap.reset();
-    m_shape.reset();
+    m_albedoMap.Reset();
+    m_normalMap.Reset();
+    m_rmaMap.Reset();
+    m_emissiveMap.Reset();
 }
 
 void Game::OnDeviceRestored()

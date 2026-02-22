@@ -67,14 +67,24 @@ private:
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
 
-    std::unique_ptr<DX::RenderTexture> m_hdrScene;
-    std::unique_ptr<DirectX::ToneMapPostProcess> m_toneMap;
-
     DirectX::SimpleMath::Matrix m_world;
     DirectX::SimpleMath::Matrix m_view;
     DirectX::SimpleMath::Matrix m_proj;
 
+    std::unique_ptr<DirectX::CommonStates>       m_states;
     std::unique_ptr<DirectX::GeometricPrimitive> m_shape;
+    std::unique_ptr<DirectX::PBREffect>          m_effect;
 
-    float m_colorScale;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> m_inputLayout;
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_radiance;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_irradiance;
+
+    std::unique_ptr<DX::RenderTexture> m_hdrScene;
+    std::unique_ptr<DirectX::ToneMapPostProcess> m_toneMap;
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_albedoMap;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_normalMap;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_rmaMap;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_emissiveMap;
 };
