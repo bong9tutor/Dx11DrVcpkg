@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "SkyboxEffect.h"
+#include "RenderTexture.h"
 
 // A basic game implementation that creates a D3D11 device and
 // provides a game loop.
@@ -67,16 +67,14 @@ private:
     // Xbox One XDK 를 사용하는 경우, 빡센 메모리 관리를 위해 필수.
     std::unique_ptr<DirectX::GraphicsMemory> m_graphicsMemory;
 
-    std::unique_ptr<DirectX::GamePad> m_gamePad;
+    std::unique_ptr<DX::RenderTexture> m_hdrScene;
+    std::unique_ptr<DirectX::ToneMapPostProcess> m_toneMap;
+
+    DirectX::SimpleMath::Matrix m_world;
     DirectX::SimpleMath::Matrix m_view;
     DirectX::SimpleMath::Matrix m_proj;
 
-    float m_pitch;
-    float m_yaw;
+    std::unique_ptr<DirectX::GeometricPrimitive> m_shape;
 
-    std::unique_ptr<DirectX::GeometricPrimitive> m_sky;
-    std::unique_ptr<DX::SkyboxEffect> m_effect;
-
-    Microsoft::WRL::ComPtr<ID3D11InputLayout> m_skyInputLayout;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_cubemap;
+    float m_colorScale;
 };

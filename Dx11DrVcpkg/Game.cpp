@@ -12,22 +12,28 @@ using namespace DirectX::SimpleMath;
 
 using Microsoft::WRL::ComPtr;
 
-Game::Game() noexcept(false) :
-    m_pitch(0),
-    m_yaw(0)
+Game::Game() noexcept(false)
 {
-    m_deviceResources = std::make_unique<DX::DeviceResources>();
+    // m_deviceResources = std::make_unique<DX::DeviceResources>(
+    //     DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_D32_FLOAT, 2, D3D_FEATURE_LEVEL_10_0
+    // );
+    // HDR 10 Display Output
+    m_deviceResources = std::make_unique<DX::DeviceResources>(
+        DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_D32_FLOAT, 2, D3D_FEATURE_LEVEL_10_0,
+        DX::DeviceResources::c_EnableHDR
+    );
+
     // TODO: Provide parameters for swapchain format, depth/stencil format, and backbuffer count.
     //   Add DX::DeviceResources::c_AllowTearing to opt-in to variable rate displays.
     //   Add DX::DeviceResources::c_EnableHDR for HDR10 display.
     m_deviceResources->RegisterDeviceNotify(this);
+
+    m_hdrScene = std::make_unique<DX::RenderTexture>(DXGI_FORMAT_R16G16B16A16_FLOAT);
 }
 
 // Initialize the Direct3D resources required to run.
 void Game::Initialize(HWND window, int width, int height)
 {
-    m_gamePad = std::make_unique<GamePad>();
-
     m_deviceResources->SetWindow(window, width, height);
 
     m_deviceResources->CreateDeviceResources();
@@ -64,49 +70,11 @@ void Game::Update(DX::StepTimer const& timer)
     // TODO: Add your game logic here.
     elapsedTime;
 
-    auto pad = m_gamePad->GetState(0);
+    auto time = static_cast<float>(m_timer.GetTotalSeconds());
 
-    if (pad.IsConnected())
-    {
-        if (pad.IsViewPressed())
-        {
-            ExitGame();
-        }
+    m_world = Matrix::CreateRotationZ(cosf(time) * 2.f);
 
-        if (pad.IsLeftStickPressed())
-        {
-            m_yaw = m_pitch = 0.f;
-        }
-        else
-        {
-            constexpr float ROTATION_GAIN = 0.1f;
-            m_yaw   += pad.thumbSticks.leftX * ROTATION_GAIN;
-            m_pitch += pad.thumbSticks.leftY * ROTATION_GAIN;
-        }
-    }
-
-    // limit pitch to straight up or straight down
-    constexpr float limit = XM_PIDIV2 - 0.01f;
-    m_pitch = std::max(-limit, m_pitch);
-    m_pitch = std::min(+limit, m_pitch);
-
-    // keep longitude in sane range by wrapping
-    if (m_yaw > XM_PI)
-    {
-        m_yaw -= XM_2PI;
-    }
-    else if (m_yaw < -XM_PI)
-    {
-        m_yaw += XM_2PI;
-    }
-
-    float y = sinf(m_pitch);
-    float r = cosf(m_pitch);
-    float z = r * cosf(m_yaw);
-    float x = r * sinf(m_yaw);
-
-    XMVECTORF32 lookAt = { x, y, z, 0.f };
-    m_view = XMMatrixLookAtRH(g_XMZero, lookAt, Vector3::Up);
+    m_colorScale = 1.f + sinf(time);
 }
 #pragma endregion
 
@@ -128,8 +96,42 @@ void Game::Render()
     // TODO: Add your rendering code here.
     context;
 
-    m_effect->SetView(m_view);
-    m_sky->Draw(m_effect.get(), m_skyInputLayout.Get());
+    m_shape->Draw(m_world, m_view, m_proj, XMVectorSetW(Colors::White * m_colorScale, 1.f));
+
+    auto renderTarget = m_deviceResources->GetRenderTargetView();
+    context->OMSetRenderTargets(1, &renderTarget, nullptr);
+
+    // HDR10 디스플레이 출력을 위해서는 Windows 10 Creators Update가 설치된 PC에 HDMI 2.0으로 연결된 4K UHD 모니터가 필요
+    // HDR 디스플레이에 있는 경우 HDR을 사용 (막눈이라 뭐가 다른지 모르겠음..)
+    {
+        switch (m_deviceResources->GetColorSpace())
+        {
+        default:
+            m_toneMap->SetOperator(ToneMapPostProcess::ACESFilmic);
+            m_toneMap->SetTransferFunction(
+                (m_deviceResources->GetBackBufferFormat() == DXGI_FORMAT_R16G16B16A16_FLOAT)
+                ? ToneMapPostProcess::Linear : ToneMapPostProcess::SRGB);
+            break;
+
+        case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+            m_toneMap->SetOperator(ToneMapPostProcess::None);
+            m_toneMap->SetTransferFunction(ToneMapPostProcess::ST2084);
+            break;
+
+        case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
+            // Required if R16G16B16A16_FLOAT is used as display format
+            // (otherwise you can omit this case)
+            m_toneMap->SetOperator(ToneMapPostProcess::None);
+            m_toneMap->SetTransferFunction(ToneMapPostProcess::Linear);
+            break;
+        }
+
+    }
+
+    m_toneMap->Process(context);
+
+    ID3D11ShaderResourceView* nullsrv[] = { nullptr };
+    context->PSSetShaderResources(0, 1, nullsrv);
 
     m_deviceResources->PIXEndEvent();
 
@@ -145,8 +147,12 @@ void Game::Clear()
 
     // Clear the views.
     auto context = m_deviceResources->GetD3DDeviceContext();
-    auto renderTarget = m_deviceResources->GetRenderTargetView();
+    auto renderTarget = m_hdrScene->GetRenderTargetView();
     auto depthStencil = m_deviceResources->GetDepthStencilView();
+
+    XMVECTORF32 color;
+    color.v = XMColorSRGBToRGB(Colors::CornflowerBlue);
+    context->ClearRenderTargetView(renderTarget, color);
 
     context->ClearRenderTargetView(renderTarget, Colors::CornflowerBlue);
     context->ClearDepthStencilView(depthStencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
@@ -165,23 +171,16 @@ void Game::Clear()
 void Game::OnActivated()
 {
     // TODO: Game is becoming active window.
-
-    if (!m_gamePad)
-        return;
-
-    m_gamePad->Resume();
 }
 
 void Game::OnDeactivated()
 {
     // TODO: Game is becoming background window.
-    m_gamePad->Suspend();
 }
 
 void Game::OnSuspending()
 {
     // TODO: Game is being power-suspended (or minimized).
-    m_gamePad->Suspend();
 }
 
 void Game::OnResuming()
@@ -189,7 +188,6 @@ void Game::OnResuming()
     m_timer.ResetElapsedTime();
 
     // TODO: Game is being power-resumed (or returning from minimize).
-    m_gamePad->Resume();
 }
 
 void Game::OnWindowMoved()
@@ -232,29 +230,31 @@ void Game::CreateDeviceDependentResources()
     // TODO: Initialize device dependent objects here (independent of window size).
     device;
 
+    m_hdrScene->SetDevice(device);
+
+    m_toneMap = std::make_unique<DirectX::ToneMapPostProcess>(device);
+
+    // Set tone-mapper as 'pass-through' for now...
+    m_toneMap->SetOperator(ToneMapPostProcess::ACESFilmic);
+    m_toneMap->SetTransferFunction(ToneMapPostProcess::SRGB);
+
     auto context = m_deviceResources->GetD3DDeviceContext();
-    m_sky = GeometricPrimitive::CreateGeoSphere(context, 2.f, 3, false /*invert for being inside the shape*/);
+    m_shape = GeometricPrimitive::CreateTeapot(context);
 
-    m_effect = std::make_unique<DX::SkyboxEffect>(device);
-
-    m_sky->CreateInputLayout(m_effect.get(), m_skyInputLayout.ReleaseAndGetAddressOf());
-
-    SetCurrentDirectory(L"../Images");
-    DX::ThrowIfFailed(CreateDDSTextureFromFile(device, L"lobbycube.dds", nullptr, m_cubemap.ReleaseAndGetAddressOf()));
-
-    m_effect->SetTexture(m_cubemap.Get());
+    m_world = Matrix::Identity;
 }
 
 // Allocate all memory resources that change on a window SizeChanged event.
 void Game::CreateWindowSizeDependentResources()
 {
     // TODO: Initialize windows-size dependent objects here.
-
     auto size = m_deviceResources->GetOutputSize();
+    m_hdrScene->SetWindow(size);
 
-    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1, 10.f);
+    m_toneMap->SetHDRSourceTexture(m_hdrScene->GetShaderResourceView());
 
-    m_effect->SetProjection(m_proj);
+    m_view = Matrix::CreateLookAt(Vector3(2.f, 2.f, 2.f), Vector3::Zero, Vector3::UnitY);
+    m_proj = Matrix::CreatePerspectiveFieldOfView(XM_PI / 4.f, float(size.right) / float(size.bottom), 0.1f, 10.0f);
 }
 
 void Game::OnDeviceLost()
@@ -262,10 +262,9 @@ void Game::OnDeviceLost()
     // TODO: Add Direct3D resource cleanup here.
     m_graphicsMemory.reset();
 
-    m_sky.reset();
-    m_effect.reset();
-    m_skyInputLayout.Reset();
-    m_cubemap.Reset();
+    m_hdrScene->ReleaseDevice();
+    m_toneMap.reset();
+    m_shape.reset();
 }
 
 void Game::OnDeviceRestored()
